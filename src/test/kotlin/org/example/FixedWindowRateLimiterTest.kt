@@ -7,7 +7,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import redis.clients.jedis.Jedis
 
-class SlidingWindowRateLimiterTest {
+class FixedWindowRateLimiterTest {
 
     companion object {
         private val redisContainer = RedisContainer("redis:latest").apply {
@@ -17,7 +17,7 @@ class SlidingWindowRateLimiterTest {
     }
 
     private lateinit var jedis: Jedis
-    private lateinit var rateLimiter: SlidingWindowRateLimiter
+    private lateinit var rateLimiter: FixedWindowRateLimiter
 
     @BeforeEach
     fun setup() {
@@ -32,7 +32,7 @@ class SlidingWindowRateLimiterTest {
 
     @Test
     fun `should allow requests within limit`() {
-        rateLimiter = SlidingWindowRateLimiter(jedis, 5, 10)
+        rateLimiter = FixedWindowRateLimiter(jedis, 5, 10)
         for (i in 1..5) {
             assertTrue(rateLimiter.isAllowed("client-1"), "Request $i should be allowed")
         }
@@ -41,7 +41,7 @@ class SlidingWindowRateLimiterTest {
    @Test
     fun `should deny requests once limit is exceeded`() {
         // First, allow requests up to the limit
-       rateLimiter = SlidingWindowRateLimiter(jedis, 5, 60)
+       rateLimiter = FixedWindowRateLimiter(jedis, 5, 60)
        for (i in 1..5) {
             assertTrue(rateLimiter.isAllowed("client-1"), "Request $i should be allowed")
         }
@@ -51,11 +51,11 @@ class SlidingWindowRateLimiterTest {
     }
 
     @Test
-    fun `should allow requests again after sliding window resets`() {
+    fun `should allow requests again after fixed window resets`() {
         val limit = 5
         val clientId = "client-1"
         val windowSize = 1L
-        rateLimiter = SlidingWindowRateLimiter(jedis, limit, windowSize)
+        rateLimiter = FixedWindowRateLimiter(jedis, limit, windowSize)
 
 
         // Allow requests up to the limit
@@ -79,7 +79,7 @@ class SlidingWindowRateLimiterTest {
         val clientId = "client-1"
         val clientId2 = "client-2"
         val windowSize = 10L
-        rateLimiter = SlidingWindowRateLimiter(jedis, limit, windowSize)
+        rateLimiter = FixedWindowRateLimiter(jedis, limit, windowSize)
 
         // Send requests from client 1 up to the limit
         for (i in 1..limit) {
@@ -98,24 +98,52 @@ class SlidingWindowRateLimiterTest {
     @Test
     fun `should allow requests again gradually in sliding window`() {
         val limit = 3
-        val windowSize = 4L
+        val windowSize = 5L
         val clientId = "client-1"
-        rateLimiter = SlidingWindowRateLimiter(jedis, limit, windowSize)
+        rateLimiter = FixedWindowRateLimiter(jedis, limit, windowSize)
 
         // Make `limit` number of requests within the window
         for (i in 1..limit) {
             assertTrue(rateLimiter.isAllowed(clientId), "Request $i should be allowed within limit")
-            Thread.sleep(1000)
+            Thread.sleep(1000) // Spread requests 1 second apart
         }
 
         // Exceed the limit immediately
         assertFalse(rateLimiter.isAllowed(clientId), "Request beyond limit should be denied")
 
-        // Wait for 2 seconds, enough for the oldest request to fall out of the window in a sliding approach
-        Thread.sleep(2000)
+        // Wait for 1 second, enough for the oldest request to fall out of the window in a sliding approach
+        Thread.sleep(1000)
 
         // If using a sliding window, the next request should now be allowed
         // In a fixed window, this would still be denied until the entire window resets
-        assertTrue(rateLimiter.isAllowed(clientId), "Request should be allowed in a sliding window")
+        assertFalse(rateLimiter.isAllowed(clientId), "Request should still be denied in a fixed window")
+    }
+
+    @Test
+    fun `should deny additional requests until fixed window resets`() {
+        val limit = 3
+        val windowSize = 5L
+        val clientId = "client-1"
+        rateLimiter = FixedWindowRateLimiter(jedis, limit, windowSize)
+
+        // Make `limit` number of requests within the window
+        for (i in 1..limit) {
+            assertTrue(rateLimiter.isAllowed(clientId), "Request $i should be allowed within limit")
+        }
+
+        // Exceed the limit within the same window
+        assertFalse(rateLimiter.isAllowed(clientId), "Request beyond limit should be denied")
+
+        // Wait just a bit (less than the window size)
+        Thread.sleep(2500) // 2.5 seconds, which is half of the window
+
+        // Additional request should still be denied since the fixed window hasn’t fully reset
+        assertFalse(rateLimiter.isAllowed(clientId), "Request should still be denied within the same fixed window")
+
+        // Wait for the remaining window period to expire
+        Thread.sleep(2500) // Wait for the remaining 2.5 seconds
+
+        // After the fixed window resets, requests should be allowed again
+        assertTrue(rateLimiter.isAllowed(clientId), "Request should be allowed after fixed window reset")
     }
 }
