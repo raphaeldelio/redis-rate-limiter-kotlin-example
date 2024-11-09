@@ -1,6 +1,7 @@
 package org.example
 
 import redis.clients.jedis.Jedis
+import java.util.*
 
 class SlidingWindowRateLimiter(
     private val jedis: Jedis,
@@ -12,24 +13,22 @@ class SlidingWindowRateLimiter(
         val currentTime = System.currentTimeMillis()
         val windowStartTime = currentTime - windowSize * 1000
         val key = "rate_limit:$clientId"
+        val uniqueMember = "$currentTime-${UUID.randomUUID()}"
 
-        // Remove timestamps outside the sliding window
-        // Removes all elements in the sorted set stored at
-        //      key with a score between min and max (inclusive).
-        jedis.zremrangeByScore(key, 0.0, windowStartTime.toDouble())
-
-        // Check the current count within the window
-        val requestCount = jedis.zcard(key)
-
-        return if (requestCount >= limit) {
-            // If the count exceeds the limit, deny the request
-            false
-        } else {
-            // Otherwise, allow the request and record the current timestamp
-            jedis.zadd(key, currentTime.toDouble(), currentTime.toString())
-            // Set expiration to automatically clear keys after window size
-            jedis.expire(key, windowSize)
-            true
+        // Transaction will also pipeline
+        val result = jedis.multi().run {
+            zremrangeByScore(key, 0.0, windowStartTime.toDouble())
+            zadd(key, currentTime.toDouble(), uniqueMember)
+            expire(key, windowSize)
+            zrange(key, 0, -1)
+            exec()
         }
+
+        if (result.isEmpty()) {
+            throw IllegalStateException("Empty result from Redis pipeline")
+        }
+
+        val requestCount = (result[3] as List<*>).size
+        return requestCount <= limit
     }
 }
