@@ -7,7 +7,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import redis.clients.jedis.Jedis
 
-class SlidingWindowRateLimiterTest {
+class SlidingWindowCounterRateLimiterTest {
 
     companion object {
         private val redisContainer = RedisContainer("redis:latest").apply {
@@ -17,7 +17,7 @@ class SlidingWindowRateLimiterTest {
     }
 
     private lateinit var jedis: Jedis
-    private lateinit var rateLimiter: SlidingWindowRateLimiter
+    private lateinit var rateLimiter: SlidingWindowCounterRateLimiter
 
     @BeforeEach
     fun setup() {
@@ -32,7 +32,7 @@ class SlidingWindowRateLimiterTest {
 
     @Test
     fun `should allow requests within limit`() {
-        rateLimiter = SlidingWindowRateLimiter(jedis, 5, 10)
+        rateLimiter = SlidingWindowCounterRateLimiter(jedis, 5, 10, 1)
         for (i in 1..5) {
             assertThat(rateLimiter.isAllowed("client-1"))
                 .withFailMessage("Request $i should be allowed")
@@ -43,7 +43,7 @@ class SlidingWindowRateLimiterTest {
     @Test
     fun `should deny requests once limit is exceeded`() {
         // First, allow requests up to the limit
-        rateLimiter = SlidingWindowRateLimiter(jedis, 5, 60)
+        rateLimiter = SlidingWindowCounterRateLimiter(jedis, 5, 60, 1)
         for (i in 1..5) {
             assertThat(rateLimiter.isAllowed("client-1"))
                 .withFailMessage("Request $i should be allowed")
@@ -57,18 +57,20 @@ class SlidingWindowRateLimiterTest {
     }
 
     @Test
-    fun `should allow requests again after fixed window resets`() {
+    fun `should allow requests again after sliding window resets`() {
         val limit = 5
         val clientId = "client-1"
-        val windowSize = 1L
-        rateLimiter = SlidingWindowRateLimiter(jedis, limit, windowSize)
+        val windowSize = 2L
+        val subWindowSize = 1L
+        rateLimiter = SlidingWindowCounterRateLimiter(jedis, limit, windowSize, subWindowSize)
 
 
         // Allow requests up to the limit
         for (i in 1..limit) {
             assertThat(rateLimiter.isAllowed(clientId))
                 .withFailMessage("Request $i should be allowed")
-                .isTrue()        }
+                .isTrue()
+        }
 
         // Exceed the limit
         assertThat(rateLimiter.isAllowed(clientId))
@@ -90,7 +92,8 @@ class SlidingWindowRateLimiterTest {
         val clientId = "client-1"
         val clientId2 = "client-2"
         val windowSize = 10L
-        rateLimiter = SlidingWindowRateLimiter(jedis, limit, windowSize)
+        val subWindowSize = 1L
+        rateLimiter = SlidingWindowCounterRateLimiter(jedis, limit, windowSize, subWindowSize)
 
         // Send requests from client 1 up to the limit
         for (i in 1..limit) {
@@ -116,8 +119,9 @@ class SlidingWindowRateLimiterTest {
     fun `should allow requests again gradually in sliding window`() {
         val limit = 3
         val windowSize = 4L
+        val subWindowSize = 1L
         val clientId = "client-1"
-        rateLimiter = SlidingWindowRateLimiter(jedis, limit, windowSize)
+        rateLimiter = SlidingWindowCounterRateLimiter(jedis, limit, windowSize, subWindowSize)
 
         // Make `limit` number of requests within the window
         for (i in 1..limit) {

@@ -3,7 +3,7 @@ package org.example
 import redis.clients.jedis.Jedis
 import java.util.*
 
-class SlidingWindowRateLimiter(
+class SlidingWindowLogRateLimiter(
     private val jedis: Jedis,
     private val limit: Int,
     private val windowSize: Long
