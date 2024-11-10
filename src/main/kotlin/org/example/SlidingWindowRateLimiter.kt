@@ -12,8 +12,9 @@ class SlidingWindowRateLimiter(
     fun isAllowed(clientId: String): Boolean {
         val currentTime = System.currentTimeMillis()
         val windowStartTime = currentTime - windowSize * 1000
+
         val key = "rate_limit:$clientId"
-        val uniqueMember = "$currentTime-${UUID.randomUUID()}"
+        val uniqueMember = "$currentTime-${UUID.randomUUID()}"  // In case we have multiple requests at the same millisecond
 
         // Transaction will also pipeline
         val result = jedis.multi().run {

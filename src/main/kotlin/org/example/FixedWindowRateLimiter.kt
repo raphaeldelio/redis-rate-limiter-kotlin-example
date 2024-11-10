@@ -16,13 +16,13 @@ class FixedWindowRateLimiter(
         // Transaction will also pipeline
         val result = jedis.multi().run {
             incr(key)
-            expire(key, windowDurationSeconds, ExpiryOption.NX)
+            expire(key, windowDurationSeconds, ExpiryOption.NX) // Set expire only if expiration was not set before
             get(key)
             exec()
         }
 
         if (result.isEmpty()) {
-            throw IllegalStateException("Empty result from Redis pipeline")
+            throw IllegalStateException("Empty result from Redis transaction")
         }
 
         val requestCount = (result[2] as String).toInt()
