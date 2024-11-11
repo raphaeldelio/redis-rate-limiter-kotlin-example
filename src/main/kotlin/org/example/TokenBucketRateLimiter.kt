@@ -29,21 +29,16 @@ class TokenBucketRateLimiter(
         val timeElapsedSecs = timeElapsedMs / 1000.0
         val tokensToAdd = (timeElapsedSecs * refillRate).toInt()
         val newTokenCount = minOf(bucketCapacity, tokenCount + tokensToAdd) // Making sure we don't exceed bucket's capacity
+        val isAllowed = newTokenCount > 0
 
-        return jedis.multi().run {
+        jedis.multi().run {
             // Update token count and last refill time if tokens were refilled
             set(keyCount, newTokenCount.toString())
             set(keyLastRefill, currentTime.toString())
-
-            val allowed = if (newTokenCount > 0) {
-                decr(keyCount)
-                true
-            } else {
-                false
-            }
-
+            if (isAllowed) decr(keyCount)
             exec()
-            allowed
         }
+
+        return isAllowed
     }
 }
