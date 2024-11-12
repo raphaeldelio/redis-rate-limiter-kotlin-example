@@ -49,4 +49,17 @@ class SlidingWindowLogRateLimiter(
         }
         return isAllowed
     }
+
+    fun isAllowedStringAlternative(clientId: String): Boolean {
+        val requestKeyPattern = "rate_limit:$clientId:*"
+        val requestCount = jedis.keys(requestKeyPattern).size
+        val isAllowed = requestCount < limit
+
+        if (isAllowed) {
+            val uniqueKey = "rate_limit:$clientId:${UUID.randomUUID()}"
+            jedis.setex(uniqueKey, windowSize, "")
+        }
+
+        return isAllowed
+    }
 }
