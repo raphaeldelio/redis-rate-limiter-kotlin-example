@@ -32,4 +32,21 @@ class SlidingWindowLogRateLimiter(
         val requestCount = (result[3] as List<*>).size
         return requestCount <= limit
     }
+
+    fun isAllowedHashAlternative(clientId: String): Boolean {
+        val key = "rate_limit:$clientId"
+        val fieldKey = UUID.randomUUID().toString()
+
+        val requestCount = jedis.hlen(key)
+        val isAllowed = requestCount < limit
+
+        if (isAllowed) {
+            jedis.multi().run {
+                hset(key, fieldKey, "")
+                hexpire(key, windowSize, *Array(1000) { fieldKey })
+                exec()
+            }
+        }
+        return isAllowed
+    }
 }
