@@ -14,14 +14,9 @@ class SlidingWindowLogRateLimiter(
         val windowStartTime = currentTime - windowSize * 1000
 
         val key = "rate_limit:$clientId"
-        val uniqueMember = "$currentTime-${UUID.randomUUID()}"  // In case we have multiple requests at the same millisecond
-
-        // Transaction will also pipeline
         val result = jedis.multi().run {
             zremrangeByScore(key, 0.0, windowStartTime.toDouble())
-            zadd(key, currentTime.toDouble(), uniqueMember)
-            expire(key, windowSize)
-            zrange(key, 0, -1)
+            zcard(key)
             exec()
         }
 
@@ -29,8 +24,19 @@ class SlidingWindowLogRateLimiter(
             throw IllegalStateException("Empty result from Redis pipeline")
         }
 
-        val requestCount = (result[3] as List<*>).size
-        return requestCount <= limit
+        val requestCount = result[1] as Long
+        val isAllowed = requestCount < limit
+
+        if (isAllowed) {
+            jedis.multi().run {
+                val uniqueMember = "$currentTime-${UUID.randomUUID()}" // Ensures uniqueness even within the same millisecond
+                zadd(key, currentTime.toDouble(), uniqueMember)
+                expire(key, windowSize)
+                exec()
+            }
+        }
+
+        return isAllowed
     }
 
     fun isAllowedHashAlternative(clientId: String): Boolean {
@@ -52,7 +58,7 @@ class SlidingWindowLogRateLimiter(
 
     fun isAllowedStringAlternative(clientId: String): Boolean {
         val requestKeyPattern = "rate_limit:$clientId:*"
-        val requestCount = jedis.keys(requestKeyPattern).size
+        val requestCount = jedis.keys(requestKeyPattern).size // Not advisable because the keys command is O(N)
         val isAllowed = requestCount < limit
 
         if (isAllowed) {

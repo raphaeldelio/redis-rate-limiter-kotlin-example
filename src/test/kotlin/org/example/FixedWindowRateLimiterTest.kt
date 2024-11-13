@@ -177,4 +177,30 @@ class FixedWindowRateLimiterTest {
             .withFailMessage("Request should be allowed after fixed window reset")
             .isTrue()
     }
+
+    @Test
+    fun `test rate limit - denied requests are not counted`() {
+        val limit = 3
+        val windowSize = 5L
+        val clientId = "client-1"
+        rateLimiter = FixedWindowRateLimiter(jedis, limit, windowSize)
+
+        for (i in 1..limit) {
+            assertThat(rateLimiter.isAllowed(clientId))
+                .withFailMessage("Request $i should be allowed")
+                .isTrue()
+        }
+
+        // Submit one more request, which should be denied
+        assertThat(rateLimiter.isAllowed(clientId))
+            .withFailMessage("This request should be denied")
+            .isFalse()
+
+        // Verify the number of entries in Redis does not include the denied request
+        val key = "rate_limit:$clientId"
+        val requestCount = jedis.get(key).toInt() // Get the count of requests in the sorted set
+        assertThat(limit)
+            .withFailMessage("The count ($requestCount) should be equal to the limit ($limit), not counting the denied request")
+            .isEqualTo(requestCount)
+    }
 }

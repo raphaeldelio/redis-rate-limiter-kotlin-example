@@ -13,19 +13,17 @@ class FixedWindowRateLimiter(
         val key = "rate_limit:$clientId"
         val windowDurationSeconds = windowSize
 
-        // Transaction will also pipeline
-        val result = jedis.multi().run {
-            incr(key)
-            expire(key, windowDurationSeconds, ExpiryOption.NX) // Set expire only if expiration was not set before
-            get(key)
-            exec()
-        }
+        val currentCount = jedis.get(key)?.toIntOrNull() ?: 0
+        val isAllowed = currentCount < limit
 
-        if (result.isEmpty()) {
-            throw IllegalStateException("Empty result from Redis transaction")
+        if (isAllowed) {
+            // Transaction will also pipeline
+            jedis.multi().run {
+                incr(key)
+                expire(key, windowDurationSeconds, ExpiryOption.NX) // Set expire only if expiration was not set before
+                exec()
+            }
         }
-
-        val requestCount = (result[2] as String).toInt()
-        return requestCount <= limit
+        return isAllowed
     }
 }

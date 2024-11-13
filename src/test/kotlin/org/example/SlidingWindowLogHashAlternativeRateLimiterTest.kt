@@ -144,4 +144,30 @@ class SlidingWindowLogHashAlternativeRateLimiterTest {
             .withFailMessage("Request should be allowed in a sliding window")
             .isTrue()
     }
+
+    @Test
+    fun `test rate limit - denied requests are not counted`() {
+        val limit = 3
+        val windowSize = 4L
+        val clientId = "client-1"
+        rateLimiter = SlidingWindowLogRateLimiter(jedis, limit, windowSize)
+
+        for (i in 1..limit) {
+            assertThat(rateLimiter.isAllowedHashAlternative(clientId))
+                .withFailMessage("Request $i should be allowed")
+                .isTrue()
+        }
+
+        // Submit one more request, which should be denied
+        assertThat(rateLimiter.isAllowedHashAlternative(clientId))
+            .withFailMessage("This request should be denied")
+            .isFalse()
+
+        // Verify the number of entries in Redis does not include the denied request
+        val key = "rate_limit:$clientId"
+        val requestCount = jedis.hlen(key) // Get the count of requests in the sorted set
+        assertThat(limit.toLong())
+            .withFailMessage("The count ($requestCount) should be equal to the limit ($limit), not counting the denied request")
+            .isEqualTo(requestCount)
+    }
 }

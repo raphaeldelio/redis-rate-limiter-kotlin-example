@@ -193,4 +193,30 @@ class TokenBucketRateLimiterTest {
             .withFailMessage("Request beyond bucket capacity should be denied")
             .isFalse()
     }
+
+    @Test
+    fun `test rate limit - denied requests are not counted`() {
+        val capacity = 3
+        val refillRatePerSecond = 0.5  // 1 token every two seconds
+        val clientId = "client-1"
+        rateLimiter = TokenBucketRateLimiter(jedis, capacity, refillRatePerSecond)
+
+        for (i in 1..capacity) {
+            assertThat(rateLimiter.isAllowed(clientId))
+                .withFailMessage("Request $i should be allowed")
+                .isTrue()
+        }
+
+        // Submit one more request, which should be denied
+        assertThat(rateLimiter.isAllowed(clientId))
+            .withFailMessage("This request should be denied")
+            .isFalse()
+
+        // Verify the number of entries in Redis does not include the denied request
+        val key = "rate_limit:$clientId:count"
+        val requestCount = jedis.get(key).toInt() // Get the count of requests in the sorted set
+        assertThat(requestCount)
+            .withFailMessage("The count ($requestCount) should be equal to zero, not counting the denied request (negative number)")
+            .isEqualTo(0)
+    }
 }
