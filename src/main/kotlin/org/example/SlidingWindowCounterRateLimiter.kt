@@ -29,7 +29,7 @@ class SlidingWindowCounterRateLimiter(
             // Sum the counts for all active sub-windows
             val subWindowsToCheck = (currentSubWindow downTo (currentSubWindow - numSubWindows + 1))
             subWindowsToCheck.forEach { subWindow ->
-                hget(key, subWindow.toString()) ?: 0
+                hget(key, subWindow.toString())
             }
 
             exec()
@@ -39,7 +39,7 @@ class SlidingWindowCounterRateLimiter(
             throw IllegalStateException("Empty result from Redis pipeline")
         }
 
-        val totalCount = result.takeLast(result.size - 2).map {
+        val totalCount = result.drop(2).map {
             (it as String?)?.toIntOrNull() ?: 0
         }.sum()
 
