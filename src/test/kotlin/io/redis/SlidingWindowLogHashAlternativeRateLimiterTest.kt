@@ -1,4 +1,4 @@
-package org.example
+package io.redis
 
 import com.redis.testcontainers.RedisContainer
 import org.assertj.core.api.Assertions.assertThat
@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test
 import redis.clients.jedis.Jedis
 import java.time.LocalDateTime
 
-class SlidingWindowLogStringAlternativeRateLimiterTest {
+class SlidingWindowLogHashAlternativeRateLimiterTest {
 
     companion object {
         private val redisContainer = RedisContainer("redis:latest").apply {
@@ -35,7 +35,7 @@ class SlidingWindowLogStringAlternativeRateLimiterTest {
     fun `should allow requests within limit`() {
         rateLimiter = SlidingWindowLogRateLimiter(jedis, 5, 10)
         for (i in 1..5) {
-            assertThat(rateLimiter.isAllowedStringAlternative("client-1"))
+            assertThat(rateLimiter.isAllowedHashAlternative("client-1"))
                 .withFailMessage("Request $i should be allowed")
                 .isTrue()
         }
@@ -46,13 +46,13 @@ class SlidingWindowLogStringAlternativeRateLimiterTest {
         // First, allow requests up to the limit
         rateLimiter = SlidingWindowLogRateLimiter(jedis, 5, 60)
         for (i in 1..5) {
-            assertThat(rateLimiter.isAllowedStringAlternative("client-1"))
+            assertThat(rateLimiter.isAllowedHashAlternative("client-1"))
                 .withFailMessage("Request $i should be allowed")
                 .isTrue()
         }
 
         // Now, attempt one more request which should exceed the limit
-        assertThat(rateLimiter.isAllowedStringAlternative("client-1"))
+        assertThat(rateLimiter.isAllowedHashAlternative("client-1"))
             .withFailMessage("Request beyond limit should be denied")
             .isFalse()
     }
@@ -67,13 +67,13 @@ class SlidingWindowLogStringAlternativeRateLimiterTest {
 
         // Allow requests up to the limit
         for (i in 1..limit) {
-            assertThat(rateLimiter.isAllowedStringAlternative(clientId))
+            assertThat(rateLimiter.isAllowedHashAlternative(clientId))
                 .withFailMessage("Request $i should be allowed")
                 .isTrue()
         }
 
         // Exceed the limit
-        assertThat(rateLimiter.isAllowedStringAlternative(clientId))
+        assertThat(rateLimiter.isAllowedHashAlternative(clientId))
             .withFailMessage("Request beyond limit should be denied")
             .isFalse()
 
@@ -81,7 +81,7 @@ class SlidingWindowLogStringAlternativeRateLimiterTest {
         Thread.sleep((windowSize + 1) * 1000) // Sleep for slightly more than window size
 
         // After the window resets, requests should be allowed again
-        assertThat(rateLimiter.isAllowedStringAlternative(clientId))
+        assertThat(rateLimiter.isAllowedHashAlternative(clientId))
             .withFailMessage("Request after window reset should be allowed")
             .isTrue()
     }
@@ -96,19 +96,19 @@ class SlidingWindowLogStringAlternativeRateLimiterTest {
 
         // Send requests from client 1 up to the limit
         for (i in 1..limit) {
-            assertThat(rateLimiter.isAllowedStringAlternative(clientId))
+            assertThat(rateLimiter.isAllowedHashAlternative(clientId))
                 .withFailMessage("Client 1 request $i should be allowed")
                 .isTrue()
         }
 
         // Exceed the limit for client 1
-        assertThat(rateLimiter.isAllowedStringAlternative(clientId))
+        assertThat(rateLimiter.isAllowedHashAlternative(clientId))
             .withFailMessage("Client 1 request beyond limit should be denied")
             .isFalse()
 
         // Requests from client 2 should still be allowed since it’s a separate key
         for (i in 1..limit) {
-            assertThat(rateLimiter.isAllowedStringAlternative(clientId2))
+            assertThat(rateLimiter.isAllowedHashAlternative(clientId2))
                 .withFailMessage("Client 2 request $i should be allowed")
                 .isTrue()
         }
@@ -123,14 +123,14 @@ class SlidingWindowLogStringAlternativeRateLimiterTest {
 
         // Make `limit` number of requests within the window
         for (i in 1..limit) {
-            assertThat(rateLimiter.isAllowedStringAlternative(clientId))
+            assertThat(rateLimiter.isAllowedHashAlternative(clientId))
                 .withFailMessage("Request $i should be allowed")
                 .isTrue()
             Thread.sleep(1000)
         }
 
         // Exceed the limit immediately
-        assertThat(rateLimiter.isAllowedStringAlternative(clientId))
+        assertThat(rateLimiter.isAllowedHashAlternative(clientId))
             .withFailMessage("Request beyond limit should be denied")
             .isFalse()
 
@@ -140,7 +140,7 @@ class SlidingWindowLogStringAlternativeRateLimiterTest {
         // If using a sliding window, the next request should now be allowed
         // In a fixed window, this would still be denied until the entire window resets
         println(LocalDateTime.now())
-        assertThat(rateLimiter.isAllowedStringAlternative(clientId))
+        assertThat(rateLimiter.isAllowedHashAlternative(clientId))
             .withFailMessage("Request should be allowed in a sliding window")
             .isTrue()
     }
@@ -153,21 +153,21 @@ class SlidingWindowLogStringAlternativeRateLimiterTest {
         rateLimiter = SlidingWindowLogRateLimiter(jedis, limit, windowSize)
 
         for (i in 1..limit) {
-            assertThat(rateLimiter.isAllowedStringAlternative(clientId))
+            assertThat(rateLimiter.isAllowedHashAlternative(clientId))
                 .withFailMessage("Request $i should be allowed")
                 .isTrue()
         }
 
         // Submit one more request, which should be denied
-        assertThat(rateLimiter.isAllowedStringAlternative(clientId))
+        assertThat(rateLimiter.isAllowedHashAlternative(clientId))
             .withFailMessage("This request should be denied")
             .isFalse()
 
         // Verify the number of entries in Redis does not include the denied request
-        val key = "rate_limit:$clientId:*"
-        val requestCount = jedis.keys(key).size // Get the count of requests in the sorted set
-        assertThat(requestCount)
+        val key = "rate_limit:$clientId"
+        val requestCount = jedis.hlen(key) // Get the count of requests in the sorted set
+        assertThat(limit.toLong())
             .withFailMessage("The count ($requestCount) should be equal to the limit ($limit), not counting the denied request")
-            .isEqualTo(limit)
+            .isEqualTo(requestCount)
     }
 }

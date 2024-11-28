@@ -1,4 +1,4 @@
-package org.example
+package io.redis
 
 import com.redis.testcontainers.RedisContainer
 import org.assertj.core.api.Assertions.assertThat
