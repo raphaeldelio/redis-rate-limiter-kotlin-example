@@ -32,7 +32,7 @@ class LeakyBucketRateLimiterTest {
 
     @Test
     fun `should allow requests within bucket capacity`() {
-        rateLimiter = LeakyBucketRateLimiter(jedis, 5, 1)
+        rateLimiter = LeakyBucketRateLimiter(jedis, 5, 1.0)
         for (i in 1..5) {
             assertThat(rateLimiter.isAllowed("client-1"))
                 .withFailMessage("Request $i should be allowed within bucket capacity")
@@ -42,7 +42,7 @@ class LeakyBucketRateLimiterTest {
 
     @Test
     fun `should deny requests once bucket is full`() {
-        rateLimiter = LeakyBucketRateLimiter(jedis, 5, 1)
+        rateLimiter = LeakyBucketRateLimiter(jedis, 5, 1.0)
         for (i in 1..5) {
             assertThat(rateLimiter.isAllowed("client-1"))
                 .withFailMessage("Request $i should be allowed within bucket capacity")
@@ -57,9 +57,8 @@ class LeakyBucketRateLimiterTest {
 
     @Test
     fun `should allow requests again after leakage`() {
-        rateLimiter = LeakyBucketRateLimiter(jedis, 5, 1)
-
-        // Fill the bucket
+        rateLimiter = LeakyBucketRateLimiter(jedis, 5, 1.0)
+        // Fill in the bucket
         for (i in 1..5) {
             assertThat(rateLimiter.isAllowed("client-1"))
                 .withFailMessage("Request $i should be allowed within bucket capacity")
@@ -71,8 +70,8 @@ class LeakyBucketRateLimiterTest {
             .withFailMessage("Request beyond bucket capacity should be denied")
             .isFalse()
 
-        // Trigger the leak processor
-        rateLimiter.leak("client-1")
+        // Wait for the bucket to leak one request
+        Thread.sleep(1000)
 
         // After leakage, one request should be allowed
         assertThat(rateLimiter.isAllowed("client-1"))
@@ -82,7 +81,7 @@ class LeakyBucketRateLimiterTest {
 
     @Test
     fun `should maintain independent buckets for multiple clients`() {
-        rateLimiter = LeakyBucketRateLimiter(jedis, 5, 1)
+        rateLimiter = LeakyBucketRateLimiter(jedis, 5, 1.0)
         val clientId1 = "client-1"
         val clientId2 = "client-2"
 
@@ -107,11 +106,29 @@ class LeakyBucketRateLimiterTest {
     }
 
     @Test
-    fun `should leak requests when triggered`() {
-        rateLimiter = LeakyBucketRateLimiter(jedis, 5, 1)
+    fun `should allow bursts up to bucket capacity`() {
+        rateLimiter = LeakyBucketRateLimiter(jedis, 10, 2.0)  // 10 tokens max, refills at 2 tokens per second
         val clientId = "client-1"
 
-        // Fill the bucket
+        // Allow requests up to bucket capacity in a burst
+        for (i in 1..10) {
+            assertThat(rateLimiter.isAllowed(clientId))
+                .withFailMessage("Burst request $i should be allowed up to bucket capacity")
+                .isTrue()
+        }
+
+        // After bursting to capacity, further requests should be denied until leakage
+        assertThat(rateLimiter.isAllowed(clientId))
+            .withFailMessage("Request beyond bucket capacity in burst should be denied")
+            .isFalse()
+    }
+
+    @Test
+    fun `should leak requests gradually and allow requests over time`() {
+        rateLimiter = LeakyBucketRateLimiter(jedis, 5, 1.0)  // 5 tokens max, refills at 1 token per second
+        val clientId = "client-1"
+
+        // Fill the bucket in burst
         for (i in 1..5) {
             assertThat(rateLimiter.isAllowed(clientId))
                 .withFailMessage("Request $i should be allowed within bucket capacity")
@@ -123,28 +140,83 @@ class LeakyBucketRateLimiterTest {
             .withFailMessage("Request beyond bucket capacity should be denied")
             .isFalse()
 
-        // Trigger the leak processor
-        rateLimiter.leak(clientId)
+        // Wait for 2 seconds to leak 2 requests
+        Thread.sleep(2000)
 
-        // Verify that a single request can now be added
+        // Two requests should now be allowed after gradual leakage
         assertThat(rateLimiter.isAllowed(clientId))
-            .withFailMessage("Request after manual leak should be allowed")
+            .withFailMessage("Request after partial refill should be allowed")
             .isTrue()
 
-        // Ensure further requests still honor the remaining capacity
         assertThat(rateLimiter.isAllowed(clientId))
-            .withFailMessage("Request beyond capacity after partial leak should be denied")
+            .withFailMessage("Second request after partial refill should be allowed")
+            .isTrue()
+
+        // Further requests should be denied until more requests are leaked
+        assertThat(rateLimiter.isAllowed(clientId))
+            .withFailMessage("Request beyond available tokens should be denied")
             .isFalse()
     }
 
     @Test
-    fun `should correctly handle zero capacity buckets`() {
-        rateLimiter = LeakyBucketRateLimiter(jedis, 0, 1)
+    fun `should fill up to capacity without overflow`() {
+        val capacity = 3
+        val refillRatePerSecond = 2.0  // 2 token per second
         val clientId = "client-1"
+        rateLimiter = LeakyBucketRateLimiter(jedis, capacity, refillRatePerSecond)
 
-        // Any request should be denied for a zero-capacity bucket
+        // Use up all tokens to fill the bucket
+        for (i in 1..capacity) {
+            assertThat(rateLimiter.isAllowed(clientId))
+                .withFailMessage("Request $i should be allowed within initial bucket capacity")
+                .isTrue()
+        }
+
+        // Verify that further requests are denied as the bucket is full
         assertThat(rateLimiter.isAllowed(clientId))
-            .withFailMessage("Request for zero-capacity bucket should always be denied")
+            .withFailMessage("Request beyond bucket capacity should be denied")
             .isFalse()
+
+        // Wait enough time to leak requests potentially over capacity
+        Thread.sleep(3000)
+
+        // Verify that bucket has leaked
+        for (i in 1..capacity) {
+            assertThat(rateLimiter.isAllowed(clientId))
+                .withFailMessage("Request $i should be allowed as bucket refills up to capacity")
+                .isTrue()
+        }
+
+        // Ensure additional requests are denied beyond the bucket's capacity
+        assertThat(rateLimiter.isAllowed(clientId))
+            .withFailMessage("Request beyond bucket capacity should be denied")
+            .isFalse()
+    }
+
+    @Test
+    fun `should not count denied requests`() {
+        val capacity = 3
+        val leakRatePerSecond = 1.0 // 1 request leaks every second
+        val clientId = "client-1"
+        rateLimiter = LeakyBucketRateLimiter(jedis, capacity, leakRatePerSecond)
+
+        // Allow requests up to the bucket's capacity
+        for (i in 1..capacity) {
+            assertThat(rateLimiter.isAllowed(clientId))
+                .withFailMessage("Request $i should be allowed")
+                .isTrue()
+        }
+
+        // Submit one more request, which should be denied as the bucket is full
+        assertThat(rateLimiter.isAllowed(clientId))
+            .withFailMessage("This request should be denied")
+            .isFalse()
+
+        // Verify the number of requests currently held in the bucket matches the capacity
+        val key = "rate_limit:$clientId:count"
+        val updatedRequestCount = jedis.get(key)?.toIntOrNull() ?: 0
+        assertThat(updatedRequestCount)
+            .withFailMessage("The count ($updatedRequestCount) should reflect the leaked requests")
+            .isEqualTo(capacity)
     }
 }
