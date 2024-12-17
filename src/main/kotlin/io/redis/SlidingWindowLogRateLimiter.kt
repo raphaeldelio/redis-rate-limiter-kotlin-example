@@ -49,7 +49,7 @@ class SlidingWindowLogRateLimiter(
         if (isAllowed) {
             jedis.multi().run {
                 hset(key, fieldKey, "")
-                hexpire(key, windowSize, *Array(1000) { fieldKey })
+                hexpire(key, windowSize, fieldKey)
                 exec()
             }
         }
